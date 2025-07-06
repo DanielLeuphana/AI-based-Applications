@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>☀️ Sunrise ChatPDF</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(120deg, #fff6e5 0%, #ffe5ec 100%);
+      color: #222;
+      min-height: 100vh;
+    }
+    header {
+      padding: 30px 0 10px 0;
+      text-align: center;
+    }
+    header h1 {
+      color: #ffc700;
+      font-size: 2.3em;
+      margin: 0;
+      font-weight: 900;
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    header h2 {
+      color: #444;
+      margin: 8px 0 0 0;
+      font-weight: 400;
+    }
+    .main-container {
+      max-width: 1300px;
+      margin: 30px auto 0 auto;
+      background: rgba(255,255,255,0.82);
+      border-radius: 22px;
+      box-shadow: 0 4px 32px rgba(255, 201, 108, 0.07);
+      padding: 24px 0;
+      display: flex;
+      min-height: 700px;
+      gap: 0;
+    }
+    .pdf-col {
+      flex: 1.2;
+      border-right: 2px solid #ffe0b3;
+      min-width: 350px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 18px 0 0 0;
+      background: linear-gradient(150deg, #fffbe6 80%, #ffe5ec 100%);
+      height: 100%;
+    }
+    .chat-col {
+      flex: 1.5;
+      display: flex;
+      flex-direction: column;
+      padding: 0 30px;
+    }
+    .pdf-viewer {
+      width: 96%;
+      min-height: 610px;
+      height: 80vh;
+      border-radius: 18px;
+      background: #fff;
+      box-shadow: 0 4px 24px #f7dcbf48;
+      border: 1.5px solid #ffd184;
+      margin-bottom: 15px;
+      overflow: hidden;
+    }
+    .pdf-viewer-embed {
+      width: 100%;
+      height: 100%;
+      border: none;
+      min-height: 600px;
+    }
+    .upload-form {
+      margin: 0 auto 20px auto;
+      padding: 24px 32px;
+      background: #fffbe9;
+      border: 2px dashed #ffd184;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 1px 7px #ffd18422;
+      max-width: 530px;
+      min-width: 280px;
+    }
+    .upload-form input[type="file"] {
+      margin: 15px 0;
+    }
+    .loading-spinner {
+      margin: 30px auto;
+      display: flex;
+      align-items: center;
+      flex-direction: column;
+    }
+    .spinner {
+      border: 6px solid #ffedba;
+      border-top: 6px solid #ff9100;
+      border-radius: 50%;
+      width: 48px;
+      height: 48px;
+      animation: spin 1.1s linear infinite;
+      margin-bottom: 10px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg);}
+      100% {transform: rotate(360deg);}
+    }
+    .chat-history {
+      flex: 1;
+      background: #fff;
+      border-radius: 13px;
+      padding: 24px 20px 12px 20px;
+      overflow-y: auto;
+      box-shadow: 0 2px 9px #e9e0d448;
+      margin-bottom: 18px;
+      max-height: 60vh;
+      min-height: 270px;
+    }
+    .chat-entry {
+      margin-bottom: 18px;
+    }
+    .chat-question {
+      background: #fff3ce;
+      color: #885600;
+      border-radius: 8px;
+      padding: 12px;
+      font-weight: bold;
+      margin-bottom: 4px;
+      border-left: 5px solid #ffb200;
+      word-break: break-word;
+      max-width: 92%;
+    }
+    .chat-answer {
+      background: #f1f1f1;
+      color: #242424;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 2px;
+      border-left: 5px solid #bababa;
+      word-break: break-word;
+      max-width: 96%;
+    }
+    .chat-form {
+      display: flex;
+      gap: 8px;
+      padding-bottom: 10px;
+      align-items: flex-end;
+      margin-bottom: 0;
+      background: #fff9eb;
+      border-radius: 10px;
+      box-shadow: 0 1px 3px #ffd18418;
+      padding: 18px 12px;
+    }
+    .chat-form input[type="text"] {
+      flex: 1;
+      padding: 10px 14px;
+      font-size: 1.08em;
+      border: 1px solid #ffda90;
+      border-radius: 6px;
+    }
+    .chat-form button {
+      padding: 11px 26px;
+      background: linear-gradient(90deg, #ffa400 60%, #ffda4d 100%);
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 1px 5px #ffd1842c;
+      transition: background 0.18s;
+    }
+    .chat-form button:hover {
+      background: #ff9500;
+    }
+    .button-bar {
+      display: flex;
+      gap: 18px;
+      justify-content: flex-end;
+      margin-top: 16px;
+      margin-bottom: 6px;
+    }
+    .button-bar button {
+      padding: 10px 22px;
+      background: linear-gradient(90deg, #ffad60 70%, #ff7b7b 100%);
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 1px 5px #ffd1842c;
+      font-size: 1em;
+      transition: background 0.18s;
+    }
+    .button-bar button:hover {
+      background: #ff7b00;
+    }
+    .error {
+      color: #f00;
+      background: #fff3f3;
+      border-radius: 8px;
+      text-align: center;
+      padding: 8px 14px;
+      margin-bottom: 18px;
+    }
+    @media (max-width: 980px) {
+      .main-container {flex-direction: column;}
+      .pdf-col, .chat-col {min-width: 0; border: none;}
+      .pdf-viewer {min-height: 220px; max-height: 300px;}
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>☀️ Sunrise</h1>
+    <h2>Die Beste ChatPDF App für professionelle Anwender</h2>
+  </header>
+  <div class="main-container">
+    <!-- PDF Column -->
+    <div class="pdf-col">
+      {% if session.pdf_filename %}
+        <div class="pdf-viewer">
+          <embed src="{{ url_for('get_pdf') }}" class="pdf-viewer-embed" type="application/pdf">
+        </div>
+      {% else %}
+        <form class="upload-form" method="POST" enctype="multipart/form-data" id="pdf-upload-form">
+          <h3>PDF auswählen oder hierher ziehen</h3>
+          <input type="file" name="pdf" accept="application/pdf" required><br>
+          <button type="submit" id="pdf-upload-btn">Analysiere deine PDF…</button>
+          <div class="loading-spinner" style="display:none;" id="loading-spinner">
+            <div class="spinner"></div>
+            <span>Analysiere deine PDF…</span>
+          </div>
+          {% if error %}
+            <div class="error">{{ error }}</div>
+          {% endif %}
+        </form>
+        <script>
+          const form = document.getElementById('pdf-upload-form');
+          form.onsubmit = function() {
+            document.getElementById('pdf-upload-btn').style.display = 'none';
+            document.getElementById('loading-spinner').style.display = '';
+          }
+        </script>
+      {% endif %}
+    </div>
+    <!-- Chat Column -->
+    <div class="chat-col">
+      {% if session.pdf_filename %}
+        <div>
+          <div class="chat-history" id="chat-history">
+            {% if chat_history %}
+              {% for entry in chat_history %}
+                <div class="chat-entry">
+                  <div class="chat-question">👤 {{ entry.question }}</div>
+                  <div class="chat-answer">🤖 {{ entry.answer }}</div>
+                </div>
+              {% endfor %}
+            {% endif %}
+          </div>
+          <form class="chat-form" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="pdf" value="">
+            <input type="text" name="question" placeholder="Stelle deine Frage zur PDF" required autocomplete="off">
+            <button type="submit">Senden</button>
+          </form>
+          <div class="button-bar">
+            <form method="POST" action="/download_chat">
+              <button type="submit">📄 Chatverlauf herunterladen</button>
+            </form>
+            <form method="POST" action="/download_key_values">
+              <button type="submit">🧩 Key Values herunterladen</button>
+            </form>
+            <form method="GET" action="/reset">
+              <button type="submit">🔁 Zurück zum Start</button>
+            </form>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>

@@ -29,7 +29,7 @@ app.secret_key = "your-secret-key"
 UPLOAD_FOLDER = "uploads"
 VECTOR_FOLDER = "tmp/faiss_index"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs("../tmp", exist_ok=True)
+os.makedirs("../../tmp", exist_ok=True)
 
 #api konfiguration
 config = configparser.ConfigParser()

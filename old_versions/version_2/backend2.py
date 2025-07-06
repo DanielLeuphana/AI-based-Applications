@@ -17,7 +17,7 @@ app.secret_key = "your-secret-key"  # Setze einen echten Key für Produktion
 UPLOAD_FOLDER = "uploads"
 VECTOR_FOLDER = "tmp/faiss_index"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs("../tmp", exist_ok=True)
+os.makedirs("../../tmp", exist_ok=True)
 
 # 📥 Konfiguration
 config = configparser.ConfigParser()
