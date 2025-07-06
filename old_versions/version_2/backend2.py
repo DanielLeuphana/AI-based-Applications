@@ -6,139 +6,105 @@ import os
 import io
 import json
 import shutil
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
-from datetime import datetime
-from langdetect import detect
-from pdf2image import convert_from_path
-import pytesseract
 
-#wieso zweimal key?
-app = Flask(__name__)#erstellt die flask-app
-app.secret_key = "your-secret-key"#??
+app = Flask(__name__)
+app.secret_key = "your-secret-key"  # Setze einen echten Key für Produktion
 
-#speicherordner für hochgeladene pdfs
 UPLOAD_FOLDER = "uploads"
-VECTOR_FOLDER = "tmp/faiss_index" #was ist faiss-vektor-index?
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)#ordner erstellen falls noch nicht existiert
-os.makedirs("tmp", exist_ok=True)#wofür ist tmp gut?
+VECTOR_FOLDER = "tmp/faiss_index"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs("../tmp", exist_ok=True)
 
-#infos für den apikey
+# 📥 Konfiguration
 config = configparser.ConfigParser()
 config.read("config.ini")
 API_KEY = config["DEFAULT"]["KEY"]
 API_URL = config["DEFAULT"]["ENDPOINT"] + "/chat/completions"
 MODEL = "meta-llama-3.1-8b-instruct"
 
-#installationspfad???
-pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-
-#ab hier teil 2: pdf-verarbeitung und textextraktion
-#funktion liest text aus dem pdf
+# 📚 PDF zu Dokumenten
 def extract_documents_from_pdf(filepath):
-    doc = fitz.open(filepath) #doc ist das hochgeladene pdf
-    full_text = "" # platzhalter für text im dokument
+    doc = fitz.open(filepath)
+    full_text = "\n".join(page.get_text() for page in doc)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    return [Document(page_content=chunk) for chunk in splitter.split_text(full_text)]
 
-    for page in doc: #für jede seite im dokument?
-        text = page.get_text() #text ist gleich der text auf jeder seite? woher kommt definition gettext?
-        if text.strip(): #falls text gefunden wird
-            full_text += text + "\n" #text wird ergänzt durch text auf dieser seite
-
-    if not full_text.strip(): #falls kein text gefunden wird
-        print("⚠️ Kein Text gefunden – OCR wird aktiviert") #ocr ist texterkennung auf bildern
-        try:
-            images = convert_from_path(filepath, dpi=100, first_page=1, last_page=20) #seiten werden in bilder verwandelt, aber wieso?? und was sollen die zahlen?
-            for image in images: #für jedes bild in den konvertierten bildern
-                ocr_text = pytesseract.image_to_string(image, lang='deu') #liest text aus bildern. sprache deutsch??
-                full_text += ocr_text + "\n" #text wird ergänzt durch text aus bildern
-        except Exception as e: #falls es nicht funktioniert??
-            print("❌ OCR-Fehler:", e)
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=80) #splittet in chunks a 1000 zeichen. (Klasse, noch leer)
-    return [Document(page_content=chunk) for chunk in splitter.split_text(full_text)]#zurückgegeben wird eine liste von textstücken (es wurde gesplittet)
-    #jeder abschnitt wird in Document-object verwandelt (weil faiss und langchain mit Document-objekten arbeiten
-
-#teil 3 - langchain vektorstore. was ist faiss?
-
-#verwandelt textchunks in vektoren mithilfe eines embeddings-modells und speichert sie lokal
+# 🧠 Vektorstore erstellen und speichern
 def create_and_save_vectorstore(docs, path):
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")#?
-    vectorstore = FAISS.from_documents(docs, embeddings)#?
-    vectorstore.save_local(path)#?
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vectorstore = FAISS.from_documents(docs, embeddings)
+    vectorstore.save_local(path)
 
-#lädt den gespeicherten faiss-vektorstore
+# Vektorstore laden
 def load_vectorstore(path):
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return FAISS.load_local(path, embeddings, allow_dangerous_deserialization=True)
 
-#findet 8 relevantesten Textstellen zum prompt??
-def get_context_from_rag(question, vectorstore, k=8):
+# Kontext abrufen
+def get_context_from_rag(question, vectorstore, k=3):
     retriever = vectorstore.as_retriever(search_kwargs={"k": k})
-    docs = retriever.invoke(question)
-    context = "\n\n".join(doc.page_content for doc in docs)
-    return f"Dokumentenauszug:\n{context}"
+    results = retriever.invoke(question)
+    return "\n\n".join(doc.page_content for doc in results)
 
-#teil 4 - LLM-Anfrage mit Kontext
-#
+# Anfrage an LLM
 def ask_llm(question, context):
-    lang = detect(question) # erkennt sprache
-    headers = { # ??
+    headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
-    if lang == "en": #wenn frage auf englisch
-        system_prompt = (
-            "You are a helpful, precise, and polite assistant specialized in analyzing academic and official documents. "
-            "You always respond in English. Answer clearly and concisely. "
-            "If the user thanks you, respond kindly (e.g., 'You're welcome')."
-        )
-    else: #wenn frage auf deutsch, oder auch andere sprachen
-        system_prompt = (
-            "Du bist ein hilfsbereiter, präziser und höflicher Assistent für die Analyse akademischer und offizieller Dokumente. "
-            "Du antwortest immer auf Deutsch. Antworte klar und kurz. "
-            "Wenn sich der Nutzer bedankt, antworte freundlich (z. B. 'Gern geschehen')."
-        )
-    messages = [#??
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"{context}\n\nFrage:\n{question}"}
-    ]
-    payload = {#??
+    payload = {
         "model": MODEL,
-        "messages": messages,
-        "temperature": 0.3
+        "messages": [
+            {"role": "system", "content": "Du bist ein Assistent für Nachhaltigkeitsberichte."},
+            {"role": "user", "content": f"Kontext:\n{context}\n\nFrage:\n{question}"}
+        ],
+        "temperature": 0.7
     }
     response = requests.post(API_URL, headers=headers, json=payload)
     if response.status_code == 200:
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        if "choices" in data and len(data["choices"]) > 0:
+            return data["choices"][0]["message"]["content"]
+        else:
+            return "⚠️ Keine Antwort vom Modell erhalten."
     else:
         return f"Fehler beim LLM: {response.status_code}\n{response.text}"
 
-#flask-route (web-interface)
 @app.route("/", methods=["GET", "POST"])
 def index():
     if "chat_history" not in session:
         session["chat_history"] = []
     chat_history = session["chat_history"]
     error = None
+
     if request.method == "POST":
         pdf_file = request.files.get("pdf")
         question = request.form.get("question")
+
+        # --- Erstes Hochladen einer PDF ---
         if pdf_file and pdf_file.filename.lower().endswith(".pdf"):
             try:
+                # PDF speichern
                 filename = pdf_file.filename
                 filepath = os.path.join(UPLOAD_FOLDER, filename)
                 pdf_file.save(filepath)
                 session["pdf_filename"] = filename
+                # Dokumente aus PDF extrahieren und Vectorstore erstellen
                 docs = extract_documents_from_pdf(filepath)
+                # Leere Chat-History bei neuem Upload
                 session["chat_history"] = []
+                # Vectorstore speichern
                 if os.path.exists(VECTOR_FOLDER):
                     shutil.rmtree(VECTOR_FOLDER)
                 create_and_save_vectorstore(docs, VECTOR_FOLDER)
             except Exception as e:
                 error = str(e)
+
+        # --- Frage an vorhandene PDF/Vectorstore stellen ---
         if question and "pdf_filename" in session and os.path.exists(VECTOR_FOLDER):
             try:
                 vectorstore = load_vectorstore(VECTOR_FOLDER)
@@ -148,34 +114,20 @@ def index():
                 session["chat_history"] = chat_history
             except Exception as e:
                 error = str(e)
+
     return render_template("index.html", chat_history=chat_history, error=error)
 
+# --- Route für PDF-Vorschau ---
 @app.route("/get_pdf")
-def get_pdf(): #download der aktuell hochgeladenen PDF
+def get_pdf():
     if "pdf_filename" in session:
         filepath = os.path.join(UPLOAD_FOLDER, session["pdf_filename"])
         if os.path.exists(filepath):
             return send_file(filepath, mimetype="application/pdf")
     return "Keine PDF hochgeladen.", 404
 
-#buttons auf webseite
-@app.route("/reset", methods=["GET"])
-def reset(): #Löscht alles (PDF, Chat, Vektoren)
-    session.clear()
-    if os.path.exists(VECTOR_FOLDER):
-        shutil.rmtree(VECTOR_FOLDER)
-    if os.path.exists(UPLOAD_FOLDER):
-        shutil.rmtree(UPLOAD_FOLDER)
-        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    return redirect("/")
-
-@app.route("/clear_chat", methods=["POST"])
-def clear_chat():#Löscht nur den Chatverlauf
-    session["chat_history"] = []
-    return redirect("/")
-
 @app.route("/download_chat", methods=["POST"])
-def download_chat():#chat downloaden
+def download_chat():
     history = session.get("chat_history", [])
     output = io.StringIO()
     for entry in history:
@@ -185,17 +137,34 @@ def download_chat():#chat downloaden
     return send_file(io.BytesIO(output.getvalue().encode()), as_attachment=True, download_name="chatverlauf.txt", mimetype="text/plain")
 
 @app.route("/download_key_values", methods=["POST"])
-def download_key_values():#json runterladen
-    if "pdf_filename" not in session or not os.path.exists(VECTOR_FOLDER):
+def download_key_values():
+    # Prüfen, ob PDF und Vektorstore vorhanden sind
+    if "pdf_filename" not in session or not os.path.exists("tmp/faiss_index"):
         return "Bitte lade zuerst eine PDF hoch!", 400
+
+    # Typische Key Values
     key_list = [
-        "name", "CO2", "NOX", "Number_of_Electric_Vehicles", "Impact",
-        "Risks", "Opportunities", "Strategy", "Actions", "Adopted_policies", "Targets"
+        "name",
+        "CO2",
+        "NOX",
+        "Number_of_Electric_Vehicles",
+        "Impact",
+        "Risks",
+        "Opportunities",
+        "Strategy",
+        "Actions",
+        "Adopted_policies",
+        "Targets"
     ]
-    vectorstore = load_vectorstore(VECTOR_FOLDER)
+
+    # Hole den Kontext aus dem gesamten PDF (Vektorstore, alles zusammenfassen)
+    vectorstore = load_vectorstore("tmp/faiss_index")
+    # Optional: Hole besonders relevante Chunks (hier einfach alle nehmen)
     context = ""
     for doc in vectorstore.similarity_search("summary", k=10):
         context += doc.page_content + "\n\n"
+
+    # Prompt für das LLM, damit ein JSON mit allen Key Values extrahiert wird
     prompt = f"""
 Du bist ein KI-Assistent. Extrahiere die folgenden Schlüsselinformationen aus dem bereitgestellten PDF-Kontext zu Nachhaltigkeitsberichten.
 Gib die Antwort als gültiges JSON mit folgenden Keys zurück:
@@ -205,8 +174,10 @@ Gib die Antwort als gültiges JSON mit folgenden Keys zurück:
 Kontext:
 {context}
 
-Achte darauf, dass fehlende Informationen als \"Not mentioned\" ausgegeben werden.
+Achte darauf, dass fehlende Informationen als "Not mentioned" ausgegeben werden.
 """
+
+    # Anfrage an LLM senden
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
@@ -223,18 +194,32 @@ Achte darauf, dass fehlende Informationen als \"Not mentioned\" ausgegeben werde
     if response.status_code == 200:
         data = response.json()
         text = data["choices"][0]["message"]["content"].strip()
+        # Versuche, den JSON-Teil herauszulesen (falls der Bot etwas Text drumherum schreibt)
         try:
             json_start = text.find('{')
             json_end = text.rfind('}') + 1
             json_str = text[json_start:json_end]
             key_values = json.loads(json_str)
         except Exception:
+            # Notfall: alles als Text
             key_values = {"error": "Fehler beim Parsen", "response": text}
     else:
         key_values = {"error": "Fehler vom LLM", "status_code": response.status_code, "response": response.text}
+
     json_data = json.dumps(key_values, indent=2)
     return send_file(io.BytesIO(json_data.encode()), as_attachment=True, download_name="key_values.json", mimetype="application/json")
 
-#app starten
+
+@app.route("/reset", methods=["GET"])
+def reset():
+    session.clear()
+    # Lösche hochgeladenes PDF und Vectorstore
+    if os.path.exists(VECTOR_FOLDER):
+        shutil.rmtree(VECTOR_FOLDER)
+    if os.path.exists(UPLOAD_FOLDER):
+        shutil.rmtree(UPLOAD_FOLDER)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    return redirect("/")
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5002)
+    app.run(debug=True)
