@@ -14,22 +14,19 @@ from datetime import datetime
 from langdetect import detect
 import re
 
-#findet Seitenzahl in der gestellten Frage heraus
-def extract_page_number_from_question(question):
-    match = re.search(r"(Seite|page)\s*(\d+)", question, re.IGNORECASE)
-    if match:
-        return int(match.group(2))
-    return None
-
-
 app = Flask(__name__)
 app.secret_key = "your-secret-key"
 
-#ordner für uploads und vektoren
+
+#ordner für uploads und vektor
 UPLOAD_FOLDER = "uploads"
 VECTOR_FOLDER = "tmp/faiss_index"
+JSON_FOLDER = "jsons"
+os.makedirs(JSON_FOLDER, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs("tmp", exist_ok=True)
+
+question_cache = {}
 
 #api konfiguration
 config = configparser.ConfigParser()
@@ -45,39 +42,18 @@ def extract_documents_from_pdf(filepath):
     doc = fitz.open(filepath)
     full_text = ""
 
-    #die ersten 50 Seiten werden direkt geladen
-    for page_num in range(min(len(doc), 50)):
+    #für die ersten 50 Seiten wird der text als full_text-String gepeichert
+    for page_num in range(len(doc)):
         page = doc[page_num]
         text = page.get_text()
         if text.strip():
             full_text += text + "\n"
-
-    #wenn es Fragen zu anderen Seiten gibt, werden diesse zusätzlich extrahiert und in Vektoren verwandelt
-    def extract_additional_pages(filepath, start_page, end_page):
-        import fitz
-        doc = fitz.open(filepath)
-        full_text = ""
-
-        for page_num in range(start_page, min(end_page + 1, len(doc))):
-            page = doc[page_num]
-            text = page.get_text()
-            if text.strip():
-                full_text += text + "\n"
-
-        splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=20)
-        documents = splitter.create_documents([full_text])
-
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        vectorstore = FAISS.load_local(VECTOR_FOLDER, embeddings, allow_dangerous_deserialization=True)
-        vectorstore.add_documents(documents)
-        vectorstore.save_local(VECTOR_FOLDER)
 
     # Kein OCR mehr! → PDF wird nur analysiert, wenn Text vorhanden ist
     if not full_text.strip():
         print("⚠️ Warnung: Kein Text im PDF gefunden – OCR ist deaktiviert.")
 
     return full_text
-
 
 #faiss-Vektorstore erstellen, speichern
 def create_and_save_vectorstore(docs, path):
@@ -109,12 +85,16 @@ def ask_llm(question, context):
             "You are a helpful, precise, and polite assistant specialized in analyzing academic and official documents. "
             "You always respond in English. Answer clearly and concisely. "
             "If the user thanks you, respond kindly (e.g., 'You're welcome')."
+            "If the user's question asks for multiple items, goals, steps, or points, format your answer as a numbered list with line breaks between points or numbers. "
+            "Do not use any formatting like bold, italics, or Markdown. Only provide plain text responses."
         )
     else:
         system_prompt = (
             "Du bist ein hilfsbereiter, präziser und höflicher Assistent für die Analyse akademischer und offizieller Dokumente. "
             "Du antwortest immer auf Deutsch. Antworte klar und kurz. "
             "Wenn sich der Nutzer bedankt, antworte freundlich (z. B. 'Gern geschehen')."
+            "Falls die Frage mehrere Punkte, Ziele oder Schritte verlangt, formatiere deine Antwort als nummerierte Liste mit Zeilenumbrüchen zwischen den Punkten oder Nummerierungen. "
+            "Bitte verwende keinerlei Formatierungen wie fett, kursiv oder Markdown. Gib deine Antworten nur als reinen Klartext zurück."
         )
     messages = [
         {"role": "system", "content": system_prompt},
@@ -132,34 +112,34 @@ def ask_llm(question, context):
     else:
         return f"Fehler beim LLM: {response.status_code}\n{response.text}"
 
-#flaskroute
+#flask-Route
 @app.route("/", methods=["GET", "POST"])
 def index():
-    if "chat_history" not in session:
+    if "chat_history" not in session: #wenn es noch keinen chat gibt, wird ein leerer Verlauf angelegt
         session["chat_history"] = []
 
     chat_history = session["chat_history"]
     error = None
 
-    if request.method == "POST":
+    if request.method == "POST": #pdf wird hochgeladen
         pdf_file = request.files.get("pdf")
         question = request.form.get("question")
 
-        if pdf_file and pdf_file.filename.lower().endswith(".pdf"):
+        if pdf_file and pdf_file.filename.lower().endswith(".pdf"): #geprüft ob es ein pdf ist
             try:
                 filename = pdf_file.filename
                 filepath = os.path.join(UPLOAD_FOLDER, filename)
                 pdf_file.save(filepath)
                 session["pdf_filename"] = filename
 
-                # 🔍 PDF-Text extrahieren
+                #  PDF-Text extrahieren
                 full_text = extract_documents_from_pdf(filepath)
 
-                # ✂️ In Chunks umwandeln (LangChain Documents)
-                splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=20)
+                #  In Chunks umwandeln (LangChain Documents)
+                splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=20)
                 documents = splitter.create_documents([full_text])
 
-                # 💾 Vectorstore erstellen
+                #  Vectorstore erstellen
                 session["chat_history"] = []
                 if os.path.exists(VECTOR_FOLDER):
                     shutil.rmtree(VECTOR_FOLDER)
@@ -172,28 +152,13 @@ def index():
         if question and "pdf_filename" in session and os.path.exists(VECTOR_FOLDER):
             try: #vektorstore wird geladen um relevante Inhalte zu finden
                 vectorstore = load_vectorstore(VECTOR_FOLDER)
-                context = get_context_from_rag(question, vectorstore) #der herausgefundene Kontext
-
-                # 🔍 Prüfen, ob Antwort leer oder unbrauchbar
-                if "Dokumentenauszug:\n" == context or len(context) < 100:
-                    filepath = os.path.join(UPLOAD_FOLDER, session["pdf_filename"])
-
-                    # ✅ Automatische Erkennung der Seitenzahl aus der Frage
-                    page = extract_page_number_from_question(question)
-                    if page:
-                        start = max(0, page - 2)
-                        end = min(page + 2, 499)  # 5-seitiger Bereich
-                    else:
-                        start = 200
-                        end = 210  # Fallback wenn keine Seite erkannt wird
-
-                    extract_additional_pages(filepath, start_page=start, end_page=end)
-
-                    # 🔁 Vektorstore neu laden und Frage erneut beantworten
-                    vectorstore = load_vectorstore(VECTOR_FOLDER)
+                if question in question_cache: #frage wurde schonmal gestellt
+                    answer = question_cache[question]
+                else:
                     context = get_context_from_rag(question, vectorstore)
+                    answer = ask_llm(question, context)
+                    question_cache[question] = answer #antwort der Frage wird gespeichert
 
-                answer = ask_llm(question, context)
                 chat_history.append({"question": question, "answer": answer})
                 session["chat_history"] = chat_history
 
@@ -242,8 +207,17 @@ def download_chat():
 #JSON herunterladen
 @app.route("/download_key_values", methods=["POST"])
 def download_key_values():
+    #prüfen, ob json schon einmal geladen worden ist
+    json_filename = f"{os.path.splitext(session['pdf_filename'])[0]}.json"
+    json_path = os.path.join(JSON_FOLDER, json_filename)
+
+    # Wenn es schon existiert, direkt zurückgeben
+    if os.path.exists(json_path):
+        return send_file(json_path, as_attachment=True, download_name="key_values.json", mimetype="application/json")
+    #prüfen, ob pdf hochgeladen wurde
     if "pdf_filename" not in session or not os.path.exists(VECTOR_FOLDER):
         return "Bitte lade zuerst eine PDF hoch!", 400
+    #Schlüsselbegriffe, die herausgefunden werden sollen
     key_list = [
         "name", "CO2", "NOX", "Number_of_Electric_Vehicles", "Impact",
         "Risks", "Opportunities", "Strategy", "Actions", "Adopted_policies", "Targets"
@@ -253,10 +227,23 @@ def download_key_values():
     for doc in vectorstore.similarity_search("summary", k=10):
         context += doc.page_content + "\n\n"
     prompt = f"""
-Du bist ein KI-Assistent. Extrahiere die folgenden Schlüsselinformationen aus dem bereitgestellten PDF-Kontext zu Nachhaltigkeitsberichten.
-Gib die Antwort als gültiges JSON mit folgenden Keys zurück:
+You are an AI assistant specialized in analyzing sustainability reports.
 
+Respond with exactly one valid JSON object matching the following keys. 
+Do not add any explanations, introductory text, or markdown code blocks like ```json. 
+Do not include comments inside the JSON. Only provide valid JSON.
 {key_list}
+**key explanations:**
+- "CO2": How much tons of CO2 did the company produce or reduce?
+- "NOX": How much NOX emissions were reported or discussed?
+- "Number_of_Electric_Vehicles": How many electric vehicles does the company operate?
+- "Impact": What positive or negative environmental or social impacts are described?
+- "Risks": What risks are mentioned related to sustainability or climate?
+- "Opportunities": What opportunities does the company identify regarding sustainability or climate action?
+- "Strategy": What overall strategy does the company present for sustainability?
+- "Actions": What concrete actions or steps has the company taken or planned?
+- "Adopted_policies": Which policies, standards, or certifications has the company adopted?
+- "Targets": What specific goals or targets has the company set (e.g., emission reductions, deadlines)?
 
 Kontext:
 {context}
@@ -278,17 +265,22 @@ Achte darauf, dass fehlende Informationen als \"Not mentioned\" ausgegeben werde
     response = requests.post(API_URL, headers=headers, json=payload)
     if response.status_code == 200:
         data = response.json()
-        text = data["choices"][0]["message"]["content"].strip()
+        text = data["choices"][0]["message"]["content"].strip() #generierten Text holen
         try:
-            json_start = text.find('{')
+            json_start = text.find('{') #findet den json teil (evtl. fügt llm noch text dazu)
             json_end = text.rfind('}') + 1
             json_str = text[json_start:json_end]
             key_values = json.loads(json_str)
+            key_values["name"] = session["pdf_filename"] #json name direkt auf pdf namen setzen
         except Exception:
             key_values = {"error": "Fehler beim Parsen", "response": text}
     else:
         key_values = {"error": "Fehler vom LLM", "status_code": response.status_code, "response": response.text}
     json_data = json.dumps(key_values, indent=2)
+    #speichert json
+    with open(json_path, "w", encoding="utf-8") as f:
+        f.write(json_data)
+
     return send_file(io.BytesIO(json_data.encode()), as_attachment=True, download_name="key_values.json", mimetype="application/json")
 
 if __name__ == "__main__":
