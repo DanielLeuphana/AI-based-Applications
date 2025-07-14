@@ -26,7 +26,6 @@ os.makedirs(JSON_FOLDER, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs("tmp", exist_ok=True)
 
-question_cache = {}
 
 #api konfiguration
 config = configparser.ConfigParser()
@@ -37,19 +36,18 @@ MODEL = "meta-llama-3.1-8b-instruct"
 
 #pdf-text extrahieren
 def extract_documents_from_pdf(filepath):
-    import fitz  # PyMuPDF
 
     doc = fitz.open(filepath)
     full_text = ""
 
-    #für die ersten 50 Seiten wird der text als full_text-String gepeichert
+    #text im Dokument wird gespeichert
     for page_num in range(len(doc)):
         page = doc[page_num]
         text = page.get_text()
         if text.strip():
             full_text += text + "\n"
 
-    # Kein OCR mehr! → PDF wird nur analysiert, wenn Text vorhanden ist
+    # Kein OCR  → PDF wird nur analysiert, wenn Text vorhanden ist
     if not full_text.strip():
         print("⚠️ Warnung: Kein Text im PDF gefunden – OCR ist deaktiviert.")
 
@@ -57,25 +55,27 @@ def extract_documents_from_pdf(filepath):
 
 #faiss-Vektorstore erstellen, speichern
 def create_and_save_vectorstore(docs, path):
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vectorstore = FAISS.from_documents(docs, embeddings)
-    vectorstore.save_local(path)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2") #erstelltes model verwandelt text in numerische Vektoren
+    vectorstore = FAISS.from_documents(docs, embeddings)#dokumente und embedding modell werden benutzt
+    #jeder Dokumentchunk bekommt Eintrag in Vektorstore
+    vectorstore.save_local(path) #speichert (an path)
 
 #bestehenden vektorstore laden
 def load_vectorstore(path):
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return FAISS.load_local(path, embeddings, allow_dangerous_deserialization=True)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")#wieder Embedding-Modell
+    return FAISS.load_local(path, embeddings, allow_dangerous_deserialization=True)#lädt gespeicherten Vektorstore vom angegebenen Pfad
 
 #nutzt RAG um zu einer Frage den relevantesten Dokument-Chunk zu finden
 def get_context_from_rag(question, vectorstore, k=8):
-    retriever = vectorstore.as_retriever(search_kwargs={"k": k})
-    docs = retriever.invoke(question)
-    context = "\n\n".join(doc.page_content for doc in docs)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": k})#sucht k relevantesten chunks
+    #frage wird an retriever gegeben
+    docs = retriever.invoke(question)#frage wird in einen Vektor umgewandelt
+    context = "\n\n".join(doc.page_content for doc in docs)#texte der rausgesuchten chunks werden aneinandergereiht
     return f"Dokumentenauszug:\n{context}" #herausgefundene Kontext wird später an llm geschickt
 
 #frage an das llm mit kontext
 def ask_llm(question, context):
-    lang = detect(question)
+    lang = detect(question)#sprache erkennen
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
@@ -105,10 +105,12 @@ def ask_llm(question, context):
         "messages": messages,
         "temperature": 0.3
     }
+    #LLM-Aufruf, sendet ganzen prompt an llm und auch link, keys usw.
     response = requests.post(API_URL, headers=headers, json=payload)
+    #antwort wird ausgelesen
     if response.status_code == 200:
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        return data["choices"][0]["message"]["content"] #aus json den text herausholen
     else:
         return f"Fehler beim LLM: {response.status_code}\n{response.text}"
 
@@ -135,9 +137,9 @@ def index():
                 #  PDF-Text extrahieren
                 full_text = extract_documents_from_pdf(filepath)
 
-                #  In Chunks umwandeln (LangChain Documents)
-                splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=20)
-                documents = splitter.create_documents([full_text])
+                #  Transform to chunks
+                splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=20)#textsplitter wird erzeugt
+                documents = splitter.create_documents([full_text])#der ganze text (full_text) wird in chunks geteilt
 
                 #  Vectorstore erstellen
                 session["chat_history"] = []
@@ -152,12 +154,20 @@ def index():
         if question and "pdf_filename" in session and os.path.exists(VECTOR_FOLDER):
             try: #vektorstore wird geladen um relevante Inhalte zu finden
                 vectorstore = load_vectorstore(VECTOR_FOLDER)
-                if question in question_cache: #frage wurde schonmal gestellt
+                # Initialisiere den user-spezifischen Cache in der Session
+                if "question_cache" not in session:
+                    session["question_cache"] = {}
+
+                # Zugriff auf session-spezifischen Cache
+                question_cache = session["question_cache"]
+
+                if question in question_cache:
                     answer = question_cache[question]
                 else:
                     context = get_context_from_rag(question, vectorstore)
                     answer = ask_llm(question, context)
-                    question_cache[question] = answer #antwort der Frage wird gespeichert
+                    question_cache[question] = answer
+                    session["question_cache"] = question_cache  # wieder abspeichern
 
                 chat_history.append({"question": question, "answer": answer})
                 session["chat_history"] = chat_history
@@ -284,4 +294,4 @@ Achte darauf, dass fehlende Informationen als \"Not mentioned\" ausgegeben werde
     return send_file(io.BytesIO(json_data.encode()), as_attachment=True, download_name="key_values.json", mimetype="application/json")
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5002)
