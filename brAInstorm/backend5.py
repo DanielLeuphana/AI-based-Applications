@@ -9,10 +9,7 @@ import shutil
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
-from datetime import datetime
 from langdetect import detect
-import re
 
 app = Flask(__name__)
 app.secret_key = "your-secret-key"
@@ -294,4 +291,4 @@ Achte darauf, dass fehlende Informationen als \"Not mentioned\" ausgegeben werde
     return send_file(io.BytesIO(json_data.encode()), as_attachment=True, download_name="key_values.json", mimetype="application/json")
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5002)
+    app.run(debug=True, port=5000)
