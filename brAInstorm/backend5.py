@@ -6,8 +6,10 @@ import os
 import io
 import json
 import shutil
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+# from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
+# from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langdetect import detect
 
@@ -16,7 +18,8 @@ app.secret_key = "your-secret-key"
 
 
 #ordner für uploads und vektor
-UPLOAD_FOLDER = "uploads"
+# UPLOAD_FOLDER = "uploads"
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 VECTOR_FOLDER = "tmp/faiss_index"
 JSON_FOLDER = "jsons"
 os.makedirs(JSON_FOLDER, exist_ok=True)
@@ -116,6 +119,14 @@ def ask_llm(question, context):
 def index():
     if "chat_history" not in session: #wenn es noch keinen chat gibt, wird ein leerer Verlauf angelegt
         session["chat_history"] = []
+
+    if "pdf_filename" in session:
+        filepath = os.path.join(UPLOAD_FOLDER, session["pdf_filename"])
+        #if not os.path.exists(filepath):
+         #   session.clear()
+        if not os.path.exists(filepath):
+            session.clear()
+            session["chat_history"] = []
 
     chat_history = session["chat_history"]
     error = None

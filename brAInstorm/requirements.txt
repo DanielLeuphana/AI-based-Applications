@@ -2,7 +2,11 @@ Flask
 requests
 PyMuPDF
 langchain
+langchain-community
 faiss-cpu
 sentence-transformers
 langdetect
 python-dotenv
+transformers
+huggingface-hub
+tiktoken
